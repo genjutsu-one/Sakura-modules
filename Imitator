@@ -62,7 +62,7 @@ class ImitatorMod(loader.Module):
         await message.edit(f"✅ Имитация `{mode}` запущена!")
 
     async def imstopcmd(self, message):
-        """Останавливает имитацию активности."""
+        """Останавливает имитацию активности"""
         chat_id = message.chat_id
 
         if chat_id in self._imitation_active:
