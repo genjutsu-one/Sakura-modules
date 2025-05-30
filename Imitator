@@ -1,4 +1,5 @@
-# meta developer: @sakura_modules & @mqvon
+# meta developer: @sakura_modules and @mqvon
+
 import asyncio
 import random
 import logging
@@ -14,61 +15,52 @@ class ImitatorMod(loader.Module):
     strings = {"name": "Imitator"}
 
     def __init__(self):
-        self.config = loader.ModuleConfig("DELAY", 5, "Задержка между действиями")
-        self._imitation_tasks = {}
-        self._imitation_active = {}
-        self.VALID_MODES = [
+        self.config = loader.ModuleConfig(
+            loader.ConfigValue("DLY", 5, "Задержка между действиями")
+        )
+        self._tsk = {}
+        self._act = {}
+        self.MDS = [
             "typing", "voice", "video", "game", "photo",
-            "round", "document", "location", "contact", "mixed"
+            "round", "audio", "document", "location", "contact", "mixed"
         ]
 
-    async def _imitate(self, chat_id, mode):
+    async def _imt(self, cid, mod):
         """Запускает имитацию активности"""
-        while True:
+        while self._act.get(cid):
             try:
-                if self._imitation_active.get(chat_id, False):
-                    chosen_action = random.choice(self.VALID_MODES[:-1]) if mode == "mixed" else mode
-                    async with self._client.action(chat_id, chosen_action):
-                        await asyncio.sleep(self.config["DELAY"])
-                else:
-                    break
+                act = random.choice(self.MDS[:-1]) if mod == "mixed" else mod
+                async with self._client.action(cid, chosen_action=act):
+                    await asyncio.sleep(self.config["DLY"])
             except Exception as e:
-                logger.error(f"Ошибка имитации в чате {chat_id}: {e}")
+                logger.error(f"Ошибка при имитации в чате {cid}: {e}")
                 await asyncio.sleep(2)
 
-    async def imcmd(self, message):
-        """Запускает имитацию активности"""
-        args = message.raw_text.split()
-        chat_id = message.chat_id
+    async def imcmd(self, msg):
+        """Запускает имитацию активности. Режимы: typing, voice, video, game, photo, round, audio, document, location, contact, mixed"""
+        await msg.delete()
+        arg = msg.raw_text.split()
+        cid = msg.chat_id
 
-        if len(args) < 2:
-            await message.edit(f"⚡ Доступные режимы: {', '.join(self.VALID_MODES)}")
+        if len(arg) < 2 or arg[1].lower() not in self.MDS:
             return
 
-        mode = args[1].lower()
+        mod = arg[1].lower()
 
-        if mode not in self.VALID_MODES:
-            await message.edit(f"❌ Недопустимый режим. Доступные: {', '.join(self.VALID_MODES)}")
-            return
+        if cid in self._act:
+            self._act.pop(cid, None)
+            if cid in self._tsk:
+                self._tsk[cid].cancel()
 
-        if chat_id in self._imitation_active:
-            self._imitation_active.pop(chat_id, None)
-            if chat_id in self._imitation_tasks:
-                self._imitation_tasks[chat_id].cancel()
+        self._act[cid] = mod
+        self._tsk[cid] = asyncio.create_task(self._imt(cid, mod))
 
-        self._imitation_active[chat_id] = mode
-        self._imitation_tasks[chat_id] = asyncio.create_task(self._imitate(chat_id, mode))
-
-        await message.edit(f"✅ Имитация `{mode}` запущена!")
-
-    async def imstopcmd(self, message):
+    async def imstopcmd(self, msg):
         """Останавливает имитацию активности"""
-        chat_id = message.chat_id
+        await msg.delete()
+        cid = msg.chat_id
 
-        if chat_id in self._imitation_active:
-            self._imitation_active.pop(chat_id, None)
-            if chat_id in self._imitation_tasks:
-                self._imitation_tasks[chat_id].cancel()
-            await message.edit("Имитация остановлена")
-        else:
-            await message.edit("Нет активной имитации в этом чате")
+        if cid in self._act:
+            self._act.pop(cid, None)
+            if cid in self._tsk:
+                self._tsk[cid].cancel()
