@@ -1,0 +1,242 @@
+# meta developer: @sakura_modules
+
+import aiohttp
+import random
+import requests
+from telethon.tl.types import Message
+from .. import loader, utils
+from aiogram.utils.exceptions import BadRequest
+
+@loader.tds
+class AnimeImageMod(loader.Module):
+    """Поисковик аниме артов"""
+
+    strings = {
+        "name": "AnimeImage",
+        "no_query": "<emoji document_id=5352703271536454445>❌</emoji> Вы не указали запрос. Использование: <команда> <запрос>",
+        "no_results": "<emoji document_id=5352703271536454445>❌</emoji> По вашему запросу ничего не найдено.",
+        "error": "<emoji document_id=5352703271536454445>❌</emoji> Произошла ошибка при обработке запроса.",
+        "invalid_image": "<emoji document_id=5352703271536454445>❌</emoji> Не удалось загрузить изображение, переключаюсь на следующее..."
+    }
+
+    async def client_ready(self, client, db):
+        self.client = client
+
+    def __init__(self):
+        self.config = loader.ModuleConfig(
+            loader.ConfigValue(
+                "FORBIDDEN_TAGS",
+                "",
+                "Список запрещенных тегов (через запятую)",
+                validator=loader.validators.String()
+            )
+        )
+        self.q = None
+        self.api = None
+        self.posts = []
+        self.post = None
+        self.prev = []
+        self.r34_pid = 0
+        self.gel_pid = 0
+
+    def _get_forbidden_tags(self):
+        return [t.strip().replace(" ", "_").lower() for t in self.config["FORBIDDEN_TAGS"].split(",") if t.strip()]
+
+    async def _filter_forbidden_posts(self, posts):
+        forbidden = self._get_forbidden_tags()
+        if not posts or not forbidden:
+            return posts
+        return [p for p in posts if not any(t in p.get("tags", "").lower().split() for t in forbidden)]
+
+    async def fetch_rule34_posts(self, q, pid=0):
+        forbidden = " ".join(f"-{t}" for t in self._get_forbidden_tags())
+        url = f"https://api.rule34.xxx/index.php?page=dapi&s=post&q=index&tags={q} {forbidden}&limit=100&pid={pid}&json=1"
+        headers = {"Accept": "application/json"}
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(url, headers=headers) as r:
+                    if r.status == 200:
+                        data = await r.json()
+                        return await self._filter_forbidden_posts(data), None
+                    return [], f"Ошибка API Rule34: статус {r.status}"
+        except Exception as e:
+            return [], f"Ошибка при получении данных с Rule34: {e}"
+
+    async def fetch_gelbooru_posts(self, q, pid=0):
+        forbidden = " ".join(f"-{t}" for t in self._get_forbidden_tags())
+        url = f"https://gelbooru.com/index.php?page=dapi&s=post&q=index&tags={q} {forbidden}&limit=100&pid={pid}&json=1"
+        headers = {"Accept": "application/json"}
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(url, headers=headers) as r:
+                    if r.status == 200:
+                        data = await r.json()
+                        if isinstance(data, dict) and "post" in data:
+                            posts = data["post"]
+                            posts = await self._filter_forbidden_posts(posts)
+                            random.shuffle(posts)
+                            return posts, None
+                        return [], "Формат ответа неверный или посты не найдены."
+                    return [], f"Ошибка API Gelbooru: статус {r.status}"
+        except Exception as e:
+            return [], f"Ошибка при получении данных с Gelbooru: {e}"
+
+    async def fetch_anime_post(self):
+        return {"file_url": f"https://pic.re/image?random={random.randint(1, 100000)}"}
+
+    async def fetch_nsfw_photo(self):
+        url = "https://api.waifu.pics/nsfw/waifu"
+        r = await utils.run_sync(requests.get, url)
+        img = r.json()
+        return {"file_url": img["url"]} if "error" not in img else None
+
+    @loader.command(description="Поиск на Rule34")
+    async def rulecmd(self, msg: Message):
+        """Поиск на Rule34"""
+        await msg.edit("<emoji document_id=5217592344957691550>🤨</emoji> Загружаю...")
+        args = utils.get_args_raw(msg)
+        if not args:
+            await msg.edit(self.strings["no_query"])
+            return
+        self.q = args
+        self.api = "rule34"
+        self.r34_pid = 0
+        self.posts, err = await self.fetch_rule34_posts(args, pid=self.r34_pid)
+        self.r34_pid += 1
+        if not self.posts:
+            await msg.edit(f"{self.strings['no_results']}\n{err or ''}")
+            return
+        self.post = self.posts.pop(0)
+        self.prev = []
+        await self.show_image_menu(msg, f"💚 Rule34: {self.q}")
+
+    @loader.command(description="Поиск на Gelbooru")
+    async def gelboorucmd(self, msg: Message):
+        """Поиск на Gelbooru"""
+        await msg.edit("<emoji document_id=5217592344957691550>🤨</emoji> Загружаю...")
+        args = utils.get_args_raw(msg)
+        if not args:
+            await msg.edit(self.strings["no_query"])
+            return
+        self.q = args
+        self.api = "gelbooru"
+        self.gel_pid = 0
+        self.posts, err = await self.fetch_gelbooru_posts(args, pid=self.gel_pid)
+        self.gel_pid += 1
+        if not self.posts:
+            await msg.edit(f"{self.strings['no_results']}\n{err or ''}")
+            return
+        self.post = self.posts.pop(0)
+        self.prev = []
+        await self.show_image_menu(msg, f"💦 Gelbooru: {self.q}")
+
+    @loader.command(description="Прислать рандом sfw")
+    async def asfwcmd(self, msg: Message):
+        """Прислать рандом sfw"""
+        await msg.edit("<emoji document_id=5217592344957691550>🤨</emoji> Загружаю...")
+        self.api = "animeart"
+        self.post = await self.fetch_anime_post()
+        self.prev = []
+        await self.show_image_menu(msg, "Держи свой артик😊")
+
+    @loader.command(description="Прислать рандом nsfw")
+    async def ansfwcmd(self, msg: Message):
+        """Прислать рандом nsfw"""
+        await msg.edit("<emoji document_id=5217592344957691550>🤨</emoji> Загружаю...")
+        self.api = "ansfw"
+        self.post = await self.fetch_nsfw_photo()
+        if not self.post:
+            await msg.edit(self.strings["error"])
+            return
+        self.prev = []
+        await self.show_image_menu(msg, "Вот твой артик...")
+
+    async def show_image_menu(self, msg: Message, caption):
+        if not self.post or "file_url" not in self.post:
+            await msg.edit(self.strings["no_results"])
+            return
+        buttons = [
+            [
+                {"text": "⬅️ Назад", "callback": self.prev_image} if self.prev else {"text": " ", "callback": None},
+                {"text": "➡️ Далее", "callback": self.next_image}
+            ],
+            [{"text": "🏷️ Теги", "callback": self.show_tags}]
+        ]
+        try:
+            await self.inline.form(
+                message=msg,
+                text=caption,
+                reply_markup=buttons,
+                photo=self.post["file_url"]
+            )
+            await msg.delete()
+        except BadRequest:
+            await msg.edit(self.strings["invalid_image"])
+            await self.next_image(msg)
+
+    async def next_image(self, call):
+        if self.post:
+            self.prev.append(self.post)
+        if not self.posts:
+            if self.api == "rule34":
+                self.posts, err = await self.fetch_rule34_posts(self.q, pid=self.r34_pid)
+                self.r34_pid += 1
+            elif self.api == "gelbooru":
+                self.posts, err = await self.fetch_gelbooru_posts(self.q, pid=self.gel_pid)
+                self.gel_pid += 1
+            elif self.api == "animeart":
+                self.post = await self.fetch_anime_post()
+                await self.update_image_menu(call, "Держи свой артик😊")
+                return
+            elif self.api == "ansfw":
+                self.post = await self.fetch_nsfw_photo()
+                await self.update_image_menu(call, "Вот твой артик...")
+                return
+            if not self.posts:
+                await call.edit(text=self.strings["no_results"])
+                return
+
+        self.post = self.posts.pop(0)
+        await self.update_image_menu(call, f"{self.api.capitalize()}: {self.q or 'Random'}")
+
+    async def prev_image(self, call):
+        if not self.prev:
+            await call.answer("Не могу найти прошлый арт...")
+            return
+        self.posts.insert(0, self.post)
+        self.post = self.prev.pop()
+        await self.update_image_menu(call, f"{self.api.capitalize()}: {self.q or 'Random'}")
+
+    async def show_tags(self, call):
+        if not self.post or "tags" not in self.post:
+            await call.edit(text="🏷️ <b>Теги:</b> отсутствуют для этого арта.")
+            return
+        tags = self.post["tags"].split()
+        tags_formatted = ' '.join(f"<code>{t}</code>" for t in tags)
+        text = f"🏷️ <b>Теги:</b>\n\n{tags_formatted}"
+        await call.edit(
+            text=text,
+            reply_markup=[[{"text": "🔙 Назад", "callback": self.back_to_image}]]
+        )
+
+    async def back_to_image(self, call):
+        caption = f"{self.api.capitalize()}: {self.q or 'Random'}"
+        await self.update_image_menu(call, caption)
+
+    async def update_image_menu(self, call, caption):
+        buttons = [
+            [
+                {"text": "⬅️ Назад", "callback": self.prev_image} if self.prev else {"text": " ", "callback": None},
+                {"text": "➡️ Далее", "callback": self.next_image}
+            ],
+            [{"text": "🏷️ Теги", "callback": self.show_tags}]
+        ]
+        try:
+            await call.edit(
+                text=caption,
+                reply_markup=buttons,
+                photo=self.post["file_url"]
+            )
+        except BadRequest:
+            await call.edit(text=self.strings["invalid_image"])
+            await self.next_image(call)
