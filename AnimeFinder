@@ -178,6 +178,7 @@ class AnimeFinderMod(loader.Module):
 
     async def togglecutcmd(self, message):
         """Включает/выключает обрезку границ"""
-        self.config["cut_borders"] = not self.config["cut_borders"]
-        self.db.set(self.strings["name"], "cut_borders", self.config["cut_borders"])
-        await message.edit(f"Обрезка границ {'включена' if self.config['cut_borders'] else 'выключена'} ✅")
+        cut_borders = self.db.get(self.strings["name"], "cut_borders", False)
+        cut_borders = not cut_borders
+        self.db.set(self.strings["name"], "cut_borders", cut_borders)
+        await message.edit(f"Обрезка границ {'включена' if cut_borders else 'выключена'} ✅")
