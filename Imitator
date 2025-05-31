@@ -4,6 +4,7 @@ import asyncio
 import random
 import logging
 from telethon import events
+from telethon.errors import ChatWriteForbiddenError, UserNotParticipantError, PeerIdInvalidError, ChannelPrivateError
 from .. import loader
 
 logger = logging.getLogger(__name__)
@@ -29,9 +30,17 @@ class ImitatorMod(loader.Module):
         """Запускает имитацию активности"""
         while self._act.get(cid):
             try:
+                await self._client.get_entity(cid)
+                async with self._client.action(cid, action="typing"):
+                    pass
                 act = random.choice(self.MDS[:-1]) if mod == "mixed" else mod
-                async with self._client.action(cid, chosen_action=act):
+                async with self._client.action(cid, action=act):
                     await asyncio.sleep(self.config["DLY"])
+            except (ChatWriteForbiddenError, UserNotParticipantError, PeerIdInvalidError, ChannelPrivateError):
+                self._act.pop(cid, None)
+                if cid in self._tsk:
+                    self._tsk[cid].cancel()
+                return
             except Exception as e:
                 logger.error(f"Ошибка при имитации в чате {cid}: {e}")
                 await asyncio.sleep(2)
