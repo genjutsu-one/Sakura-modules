@@ -1,0 +1,124 @@
+# meta developer: @sakura_modules
+from .. import loader, utils
+from telethon import TelegramClient
+import numpy as np
+from scipy.io.wavfile import write
+from pydub import AudioSegment
+import os
+import tempfile
+import asyncio
+
+@loader.tds
+class MorseVoiceMod(loader.Module):
+    """Модуль для перевода на морзянку"""
+
+    strings = {
+        "name": "MorseVoice",
+        "invalid_args": "Укажите текст для перевода, например: /ms Привет",
+    }
+
+    def __init__(self):
+        self._client = None
+        self._me = None
+        self.morse_code = {
+            'А': '.-', 'Б': '-...', 'В': '.--', 'Г': '--.', 'Д': '-..', 'Е': '.', 'Ё': '.', 
+            'Ж': '...-', 'З': '--..', 'И': '..', 'Й': '.---', 'К': '-.-', 'Л': '.-..', 
+            'М': '--', 'Н': '-.', 'О': '---', 'П': '.--.', 'Р': '.-.', 'С': '...', 
+            'Т': '-', 'У': '..-', 'Ф': '..-.', 'Х': '....', 'Ц': '-.-.', 'Ч': '---.', 
+            'Ш': '----', 'Щ': '--.-', 'Ъ': '--.--', 'Ы': '-.--', 'Ь': '-..-', 'Э': '..-..', 
+            'Ю': '..--', 'Я': '.-.-', 
+            'A': '.-', 'B': '-...', 'C': '-.-.', 'D': '-..', 'E': '.', 'F': '..-.', 
+            'G': '--.', 'H': '....', 'I': '..', 'J': '.---', 'K': '-.-', 'L': '.-..', 
+            'M': '--', 'N': '-.', 'O': '---', 'P': '.--.', 'Q': '--.-', 'R': '.-.', 
+            'S': '...', 'T': '-', 'U': '..-', 'V': '...-', 'W': '.--', 'X': '-..-', 
+            'Y': '-.--', 'Z': '--..', ' ': ' '
+        }
+
+    async def client_ready(self, client: TelegramClient, db):
+        self._db = db
+        self._client = client
+        self._me = await client.get_me()
+
+    async def mscmd(self, message):
+        """<текст> - переводит текст в азбуку Морзе и отправляет голосовое сообщение"""
+        wav_path = None
+        ogg_path = None
+        try:
+            args = utils.get_args_raw(message)
+            if not args:
+                await message.edit(self.strings["invalid_args"])
+                return
+
+            text = args.upper()
+            morse = ''
+            for char in text:
+                if char in self.morse_code:
+                    morse += self.morse_code[char] + ' '
+                else:
+                    morse += ' '
+
+            await message.edit(f"<blockquote>{args}</blockquote>")
+
+            sample_rate = 44100
+            dot_duration = 0.1
+            dash_duration = 0.3
+            space_duration = 0.1
+            letter_space_duration = 0.3
+            word_space_duration = 0.7
+            freq = 800
+
+            audio = []
+            morse_words = morse.strip().split('  ')
+            for i, word in enumerate(morse_words):
+                for char_morse in word.split():
+                    if not char_morse:
+                        continue
+                    for symbol in char_morse:
+                        if symbol == '.':
+                            duration = dot_duration
+                        elif symbol == '-':
+                            duration = dash_duration
+                        else:
+                            continue
+                        t = np.linspace(0, duration, int(duration * sample_rate), endpoint=False, dtype=np.float32)
+                        signal = 0.5 * np.sin(2 * np.pi * freq * t)
+                        audio.append(signal)
+                        silence = np.zeros(int(space_duration * sample_rate), dtype=np.float32)
+                        audio.append(silence)
+                    silence = np.zeros(int(letter_space_duration * sample_rate), dtype=np.float32)
+                    audio.append(silence)
+                if i < len(morse_words) - 1:
+                    silence = np.zeros(int(word_space_duration * sample_rate), dtype=np.float32)
+                    audio.append(silence)
+
+            if audio:
+                audio = np.concatenate(audio)
+            else:
+                audio = np.zeros(int(sample_rate * 1.0), dtype=np.float32)
+
+            audio = np.int16(audio / np.max(np.abs(audio) + 1e-10) * 32767)
+
+            wav_path = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
+            write(wav_path, sample_rate, audio)
+
+            ogg_path = tempfile.NamedTemporaryFile(suffix=".ogg", delete=False).name
+            AudioSegment.from_wav(wav_path).export(ogg_path, format="ogg", codec="libopus")
+
+            await self._client.send_file(
+                message.to_id,
+                ogg_path,
+                voice=True,
+                reply_to=message.id
+            )
+
+        except Exception:
+            await message.edit("Произошла ошибка при создании голосового сообщения")
+            return
+
+        finally:
+            for file_path in [wav_path, ogg_path]:
+                if file_path and os.path.exists(file_path):
+                    try:
+                        os.remove(file_path)
+                    except Exception:
+                        pass
