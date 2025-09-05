@@ -40,7 +40,7 @@ class MorseVoiceMod(loader.Module):
         self._me = await client.get_me()
 
     async def mscmd(self, message):
-        """<текст> - переводит текст в азбуку Морзе и отправляет голосовое сообщение"""
+        """<текст> - переводит текст в азбуку Морзе и отправляет гc"""
         wav_path = None
         ogg_path = None
         try:
