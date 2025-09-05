@@ -1,4 +1,4 @@
-# meta developer: @vpnsakura
+# meta developer: @sakura_modules
 from asyncio import sleep
 from telethon import functions, types
 from .. import loader, utils
